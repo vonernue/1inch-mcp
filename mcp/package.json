@@ -1,0 +1,30 @@
+{
+  "name": "mcp",
+  "packageManager": "yarn@3.2.3",
+  "dependencies": {
+    "@1inch/cross-chain-sdk": "^0.1.13",
+    "@1inch/fusion-sdk": "^2.2.3",
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "@tanstack/react-query": "^5.71.10",
+    "axios": "^1.8.4",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "react": "^19.1.0",
+    "zod": "^3.24.2"
+  },
+  "type": "commonjs",
+  "bin": {
+    "crypto": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19",
+    "typescript": "^5.8.2"
+  }
+}

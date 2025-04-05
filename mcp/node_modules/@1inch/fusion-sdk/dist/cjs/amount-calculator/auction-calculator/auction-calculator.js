@@ -1,0 +1,87 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AuctionCalculator = void 0;
+const limit_order_sdk_1 = require("@1inch/limit-order-sdk");
+class AuctionCalculator {
+    constructor(startTime, duration, initialRateBump, points, gasCost = {
+        gasBumpEstimate: 0n,
+        gasPriceEstimate: 0n
+    }) {
+        this.startTime = startTime;
+        this.duration = duration;
+        this.initialRateBump = initialRateBump;
+        this.points = points;
+        this.gasCost = gasCost;
+    }
+    get finishTime() {
+        return this.startTime + this.duration;
+    }
+    static fromAuctionData(details) {
+        return new AuctionCalculator(details.startTime, details.duration, details.initialRateBump, details.points, details.gasCost);
+    }
+    static calcInitialRateBump(startAmount, endAmount) {
+        const bump = (AuctionCalculator.RATE_BUMP_DENOMINATOR * startAmount) /
+            endAmount -
+            AuctionCalculator.RATE_BUMP_DENOMINATOR;
+        return Number(bump);
+    }
+    static calcAuctionTakingAmount(takingAmount, rate) {
+        return (0, limit_order_sdk_1.mulDiv)(takingAmount, BigInt(rate) + AuctionCalculator.RATE_BUMP_DENOMINATOR, AuctionCalculator.RATE_BUMP_DENOMINATOR, limit_order_sdk_1.Rounding.Ceil);
+    }
+    static calcAuctionMakingAmount(makingAmount, rate) {
+        return (0, limit_order_sdk_1.mulDiv)(makingAmount, AuctionCalculator.RATE_BUMP_DENOMINATOR, BigInt(rate) + AuctionCalculator.RATE_BUMP_DENOMINATOR);
+    }
+    static baseFeeToGasPriceEstimate(baseFee) {
+        return baseFee / AuctionCalculator.GAS_PRICE_BASE;
+    }
+    static calcGasBumpEstimate(endTakingAmount, gasCostInToToken) {
+        return ((gasCostInToToken * AuctionCalculator.RATE_BUMP_DENOMINATOR) /
+            endTakingAmount);
+    }
+    calcAuctionTakingAmount(takingAmount, rate) {
+        return AuctionCalculator.calcAuctionTakingAmount(takingAmount, rate);
+    }
+    calcRateBump(time, blockBaseFee = 0n) {
+        const gasBump = this.getGasPriceBump(blockBaseFee);
+        const auctionBump = this.getAuctionBump(time);
+        const final = auctionBump > gasBump ? auctionBump - gasBump : 0n;
+        return Number(final);
+    }
+    getGasPriceBump(blockBaseFee) {
+        if (this.gasCost.gasBumpEstimate === 0n ||
+            this.gasCost.gasPriceEstimate === 0n ||
+            blockBaseFee === 0n) {
+            return 0n;
+        }
+        return ((this.gasCost.gasBumpEstimate * blockBaseFee) /
+            this.gasCost.gasPriceEstimate /
+            AuctionCalculator.GAS_PRICE_BASE);
+    }
+    getAuctionBump(blockTime) {
+        const auctionFinishTime = this.finishTime;
+        if (blockTime <= this.startTime) {
+            return this.initialRateBump;
+        }
+        else if (blockTime >= auctionFinishTime) {
+            return 0n;
+        }
+        let currentPointTime = this.startTime;
+        let currentRateBump = this.initialRateBump;
+        for (const { coefficient: nextRateBump, delay } of this.points) {
+            const nextPointTime = BigInt(delay) + currentPointTime;
+            if (blockTime <= nextPointTime) {
+                return (((blockTime - currentPointTime) * BigInt(nextRateBump) +
+                    (nextPointTime - blockTime) * currentRateBump) /
+                    (nextPointTime - currentPointTime));
+            }
+            currentPointTime = nextPointTime;
+            currentRateBump = BigInt(nextRateBump);
+        }
+        return (((auctionFinishTime - blockTime) * currentRateBump) /
+            (auctionFinishTime - currentPointTime));
+    }
+}
+exports.AuctionCalculator = AuctionCalculator;
+AuctionCalculator.RATE_BUMP_DENOMINATOR = 10000000n;
+AuctionCalculator.GAS_PRICE_BASE = 1000000n;
+//# sourceMappingURL=auction-calculator.js.map
