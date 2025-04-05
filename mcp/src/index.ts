@@ -919,24 +919,6 @@ async function main() {
   // const transport = new StdioServerTransport();
   // await server.connect(transport);
   // console.log("Crypto MCP Server running on stdio");
-  // console.log(await swap(
-  //   "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 
-  //   "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 
-  //   42161,
-  //   1,
-  //   6, 
-  //   "0x2251a41d1ba5f9aff0769be0c22ef1b522c308dd",
-  //   "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c6945"
-  // ))
-  // transferERC20Token(
-  //   "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
-  //   "0xda84f65c486cfd4f923331f3763a0d51e4a615aa",
-  //   0.01,
-  //   6,
-  //   "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c9645",
-  //   42161
-  // )
-  // console.log(await getCrosschainSwapQuote(1, 10, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", 100))
 }
 
 main().catch((error) => {
