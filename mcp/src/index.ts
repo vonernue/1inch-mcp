@@ -287,11 +287,11 @@ async function crossChainSwap(
 
   // Approve tokens for spending.
   // If you need to approve the tokens before posting an order, this code can be uncommented for first run.
-  // const tkn = new Contract(fromTokenAddress, approveABI, new Wallet(privateKey, ethersRpcProvider));
-  // await tkn.approve(
-  //     '0x111111125421ca6dc452d289314280a0f8842a65', // aggregation router v6
-  //     (2n**256n - 1n) // unlimited allowance
-  // );
+  const tkn = new Contract(fromTokenAddress, approveABI, new Wallet(privateKey, ethersRpcProvider));
+  await tkn.approve(
+      '0x111111125421ca6dc452d289314280a0f8842a65', // aggregation router v6
+      (2n**256n - 1n) // unlimited allowance
+  );
 
   const params = {
     srcChainId: fromChainId,
