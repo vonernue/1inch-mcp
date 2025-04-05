@@ -916,9 +916,9 @@ server.tool(
 );
 
 async function main() {
-  // const transport = new StdioServerTransport();
-  // await server.connect(transport);
-  // console.log("Crypto MCP Server running on stdio");
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.log("Crypto MCP Server running on stdio");
 }
 
 main().catch((error) => {
