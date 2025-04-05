@@ -17,9 +17,6 @@ client = anthropic.Anthropic()
 # Claude API settings
 MODEL = "claude-3-7-sonnet-20250219"
 
-# Define system prompt in code
-SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
-
 server_params = StdioServerParameters(
     command="node",  # Executable
     args=["../mcp/build/index.js"],  # Optional command line arguments
@@ -27,7 +24,7 @@ server_params = StdioServerParameters(
 )
 
 # Chat function for Gradio
-async def chat_bot(message, history):
+async def chat_bot(message, history, private_key, public_key):
     # Construct messages from history
     messages = []
     for human, assistant in history:
@@ -37,7 +34,8 @@ async def chat_bot(message, history):
     
     # Add the current message
     messages.append({"role": "user", "content": message})
-    
+    # Define system prompt in code
+    SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
     response = ""
     async with stdio_client(server_params) as (read, write):
         # Call Claude API
@@ -52,6 +50,13 @@ async def chat_bot(message, history):
                 "input_schema": tool.inputSchema
             } for tool in tools.tools]
 
+            if public_key:
+                # Add public key to the system prompt
+                SYSTEM_PROMPT += f"\nUser's wallet address: {public_key}"
+            if private_key:
+                # Add private key to the system prompt
+                SYSTEM_PROMPT += f"\nUser's wallet private key: {private_key}"
+
             response = client.messages.create(
                 system=SYSTEM_PROMPT,
                 model=MODEL,
@@ -59,6 +64,8 @@ async def chat_bot(message, history):
                 messages=messages,
                 tools=available_tools
             )
+            print("Claude response:", response)
+
 
             # Process response and handle tool calls
             final_text = []
@@ -68,6 +75,7 @@ async def chat_bot(message, history):
                 if content.type == 'text':
                     final_text.append(content.text)
                     assistant_message_content.append(content)
+
                     yield "\n".join(final_text)
                 elif content.type == 'tool_use':
                     tool_name = content.name
@@ -102,7 +110,6 @@ async def chat_bot(message, history):
                     )
 
                     final_text.append(response.content[0].text)
-                    yield "\n".join(final_text)
 
             yield "\n".join(final_text)
 
@@ -149,6 +156,7 @@ with gr.Blocks(title="WalletPilot") as app:
             
             chatbot = gr.ChatInterface(
                 fn=chat_bot,
+                additional_inputs=[public_key, privateKeyState]
             )
 
 app.launch()
