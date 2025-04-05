@@ -106,6 +106,51 @@ async function getGasPrice(protocol: string) {
   }
 }
 
+async function getTransactionByHash(
+  protocol: string,
+  transactionHash: string,
+  withLogs: boolean = false,
+  withDecode: boolean = false
+) {
+  // Validate protocol
+  const validProtocols = ["ethereum", "arbitrum", "optimism", "base"];
+  if (!validProtocols.includes(protocol)) {
+    return {
+      error: true,
+      message: `Invalid protocol: ${protocol}. Must be one of: ${validProtocols.join(", ")}`
+    };
+  }
+  
+  const url = `https://web3.nodit.io/v1/${protocol}/mainnet/blockchain/getTransactionByHash`;
+  
+  // Define request object interface
+  interface TransactionRequest {
+    transactionHash: string;
+    withLogs: boolean;
+    withDecode: boolean;
+  }
+  
+  // Create request object
+  const request: TransactionRequest = {
+    transactionHash,
+    withLogs,
+    withDecode
+  };
+  
+  try {
+    const response = await axios.post(url, request, {
+      headers: {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "X-API-KEY": ENV.NODIT_APIKEY,
+      }
+    });
+    return response.data;
+  } catch (error) {
+    return error;
+  }
+}
+
 async function getPortfolioData(addresses: string[], chainid: number) {
   const url = "https://api.1inch.dev/portfolio/portfolio/v4/overview/protocols/current_value";
 
@@ -723,6 +768,34 @@ server.tool("getGasPrice", "Get current gas price for a specific blockchain prot
       ],
   };
 });
+
+server.tool(
+  "getTransactionByHash",
+  "Get transaction details by transaction hash",
+  {
+    protocol: z.enum(["ethereum", "arbitrum", "optimism", "base"]).describe("Blockchain protocol"),
+    transactionHash: z.string().describe("The transaction hash to retrieve details for"),
+    withLogs: z.boolean().optional().default(false).describe("Include transaction logs"),
+    withDecode: z.boolean().optional().default(false).describe("Decode transaction data")
+  },
+  async ({ protocol, transactionHash, withLogs, withDecode }) => {
+    const transactionData = await getTransactionByHash(
+      protocol,
+      transactionHash,
+      withLogs,
+      withDecode
+    );
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(transactionData) || "Cannot fetch transaction data",
+        },
+      ],
+    };
+  }
+);
 
 async function main() {
   const transport = new StdioServerTransport();
