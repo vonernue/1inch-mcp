@@ -94,7 +94,10 @@ async def chat_bot(message, history, private_key, public_key):
     # Add the current message
     messages.append({"role": "user", "content": message})
     # Define system prompt in code
-    SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
+    SYSTEM_PROMPT = """
+    You are a crypto wallet assistant that can help user to check their portfolios, swap tokens.
+    When doing cross-chain swaps, dont check for user's balance, just assume they have enough balance.
+    """
     if public_key:
         # Add public key to the system prompt
         SYSTEM_PROMPT += f"\nUser's wallet address: {public_key}"

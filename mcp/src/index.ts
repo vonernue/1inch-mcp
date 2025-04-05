@@ -447,6 +447,8 @@ async function crossChainSwap(
   walletAddress: string,
   privateKey: string,
 ) {
+  let rtMsg = "";
+  
   const nodeRpc = getNodeRpcUrl(fromChainId);
   const ethersRpcProvider = new JsonRpcProvider(nodeRpc);
 
@@ -520,7 +522,7 @@ async function crossChainSwap(
                     if (order.status === 'executed') {
                         console.log(`Order is complete. Exiting.`);
                         clearInterval(intervalId);
-                        return "Crosschain swap completed"
+                        rtMsg = "Order is complete";
                     }
                 }
             ).catch(error =>
@@ -534,7 +536,6 @@ async function crossChainSwap(
                             sdk.submitSecret(orderHash, secrets[fill.idx])
                                 .then(() => {
                                     console.log(`Fill order found! Secret submitted: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
-                
                                 })
                                 .catch((error) => {
                                     console.error(`Error submitting secret: ${JSON.stringify(error, null, 2)}`);
@@ -551,26 +552,27 @@ async function crossChainSwap(
                             statusText: error.response.statusText,
                             data: error.response.data
                         });
-                        return 'Error getting ready to accept secret fills'
+                        rtMsg = 'Error getting ready to accept secret fills'
                     } else if (error.request) {
                         // The request was made but no response was received
                         console.error('No response received:', error.request);
-                        return 'No response received when submitting secret'
+                        rtMsg = 'No response received when submitting secret'
                     } else {
                         // Something happened in setting up the request that triggered an Error
                         console.error('Error', error.message);
-                        return 'Error when submitting secret'
+                        rtMsg =  'Error when submitting secret'
                     }
                 });
         }, 5000);
       }).catch((error) => {
           console.dir(error, { depth: null });
-          return "Error placing order"
+          rtMsg = "Error placing order"
       });
   }).catch((error) => {
       console.dir(error, { depth: null });
-      return "Error getting quote"
+      rtMsg = "Error getting quote"
   });
+  return rtMsg;
 }
 
 async function transferNativeToken(
@@ -690,15 +692,24 @@ server.tool(
   "Get Token Info",
   {
     tokenName: z.string().describe("Token name to search for"),
+    chainid: z.number().describe("Chain ID"),
   },
-  async ({ tokenName }) => {
+  async ({ tokenName, chainid}) => {
     const tokenInfo = await getTokenInfo(tokenName);
+
+    let tokens: any = [];
+  
+    tokenInfo.forEach((token: { [key: string]: any }) => {
+      if (token.chainId === chainid) {
+        tokens.push(token);
+      }
+    });
 
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(tokenInfo) || "Cannot fetch token info",
+          text: JSON.stringify(tokens) || "Cannot fetch token info",
         },
       ],
     };
@@ -776,13 +787,13 @@ server.tool(
     privateKey: z.string().describe("Private key"),
   },
   async ({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, amount, decimal, walletAddress, privateKey }) => {
-    await crossChainSwap(fromChainId, toChainId, fromTokenAddress, toTokenAddress, amount, decimal, walletAddress, privateKey);
+    let response = await crossChainSwap(fromChainId, toChainId, fromTokenAddress, toTokenAddress, amount, decimal, walletAddress, privateKey);
 
     return {
       content: [
         {
           type: "text",
-          text: "Crosschain swap started",
+          text: response,
         },
       ],
     };
@@ -918,7 +929,7 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.log("Crypto MCP Server running on stdio");
+  // console.log("Crypto MCP Server running on stdio");
 }
 
 main().catch((error) => {
