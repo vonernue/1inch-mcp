@@ -4,6 +4,7 @@ import requests
 import json
 import anthropic
 import asyncio
+from eth_account import Account
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
@@ -178,16 +179,32 @@ async def chat_bot(message, history):
 
             yield "\n".join(final_text)
 
-def save_settings(private_key, wallet_address):
-    # Update transaction history when settings are saved
-    if private_key and wallet_address:
-        status_msg = "✅ Settings saved successfully!"
-    elif private_key:
-        status_msg = "⚠️ Settings saved but wallet address is missing. Transaction history won't be available."
-    elif wallet_address:
-        status_msg = "⚠️ Settings saved but private key is missing. Signing transactions won't be available."
-    else:
-        status_msg = "⚠️ No settings provided."
+def save_settings(private_key, wallet_address=None):
+    """
+    Save user settings and derive wallet address from private key if not provided
+    """
+    try:
+        # Try to derive the wallet address from private key
+        if private_key:
+            acct = Account.from_key(private_key)
+            derived_address = acct.address
+            
+            # Use derived address if wallet_address not provided
+            if not wallet_address:
+                wallet_address = derived_address
+                
+            # Validate if provided address matches derived address
+            elif wallet_address.lower() != derived_address.lower():
+                status_msg = "⚠️ Warning: Provided wallet address doesn't match the address derived from private key"
+            else:
+                status_msg = "✅ Settings saved successfully!"
+        else:
+            status_msg = "⚠️ No private key provided."
+            
+        if not wallet_address:
+            status_msg = "⚠️ No wallet address available."
+    except Exception as e:
+        status_msg = f"⚠️ Error processing private key: {str(e)}"
     
     # Fetch transaction history if wallet address is provided
     transaction_history = fetch_transaction_history(wallet_address) if wallet_address else "No wallet address provided"
