@@ -253,6 +253,28 @@ with gr.Blocks(title="WalletPilot", css="""
         background-color: #f44336 !important;
         color: white !important;
     }
+    .confirmation-box {
+        aspect-ratio: 1/1;
+        min-height: 200px;
+        max-height: 300px;
+        display: flex;
+        flex-direction: column;
+    }
+    .confirmation-box > .prose {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .history-box {
+        min-height: 400px;
+        display: flex;
+        flex-direction: column;
+    }
+    .history-box > .prose {
+        flex-grow: 1;
+        overflow-y: auto;
+    }
 """) as app:
     privateKeyState = gr.State("")
     walletAddressState = gr.State("")
@@ -270,9 +292,15 @@ with gr.Blocks(title="WalletPilot", css="""
     confirmation_row = gr.Row(visible=False, elem_classes=["confirmation-row"])
     
     with gr.Row():
-        # Main content
+        # Left panel for main content
         with gr.Column(scale=3):
             with gr.Tabs():
+                with gr.Tab("💬 Chat"):
+                    chatbot = gr.ChatInterface(
+                        fn=chat_bot,
+                        title="Claude Assistant"
+                    )
+                
                 with gr.Tab("🔧 Settings"):
                     gr.Markdown("## App Settings")
 
@@ -287,8 +315,15 @@ with gr.Blocks(title="WalletPilot", css="""
                         placeholder="Enter your wallet address (0x...)"
                     )
                     
+                    tx_data = gr.Textbox(
+                        label="Transaction Data",
+                        placeholder="Enter transaction data (JSON)"
+                    )
+                    
                     save_btn = gr.Button("Save Settings")
                     settings_output = gr.Textbox(label="Status", interactive=False)
+                    sign_tx_btn = gr.Button("Sign Transaction")
+                    tx_status = gr.Textbox(label="Transaction Status", interactive=False)
 
                     save_btn.click(
                         fn=save_settings,
@@ -296,37 +331,18 @@ with gr.Blocks(title="WalletPilot", css="""
                         outputs=[privateKeyState, walletAddressState, settings_output, tx_history]
                     )
                     
-                with gr.Tab("💬 Chat"):
-                    with gr.Row():
-                        gr.Markdown("## Chat")
-                    
-                    chatbot = gr.ChatInterface(
-                        fn=chat_bot,
-                        title="Claude Assistant"
-                    )
-                    
-                with gr.Tab("🔄 Transactions"):
-                    gr.Markdown("## Create Transaction")
-                    
-                    tx_data = gr.Textbox(
-                        label="Transaction Data",
-                        placeholder="Enter transaction data (JSON)"
-                    )
-                    
-                    sign_tx_btn = gr.Button("Sign Transaction")
-                    tx_status = gr.Textbox(label="Transaction Status", interactive=False)
-                    
                     sign_tx_btn.click(
                         fn=sign_transaction,
                         inputs=[walletAddressState, privateKeyState, tx_data],
                         outputs=[pvkey_operation, current_operation, pvkey_needs_confirmation, confirmation_row, tx_status]
                     )
-                    
-        # Right sidebar
+        
+        # Right panel for confirmation and history
         with gr.Column(scale=1):
-            # Top-right: Private key confirmation
-            with gr.Group(elem_classes=["sidebar-box"]):
+            # Top-right: Square-shaped private key confirmation
+            with gr.Group(elem_classes=["sidebar-box", "confirmation-box"]):
                 pvkey_prompt = gr.Markdown("## Private Key Operations")
+                pvkey_operation.render()
                 
                 with confirmation_row:
                     confirm_btn = gr.Button("Confirm", variant="primary", elem_classes=["confirm-btn"])
@@ -345,9 +361,10 @@ with gr.Blocks(title="WalletPilot", css="""
                     outputs=[pvkey_operation, current_operation, pvkey_needs_confirmation, confirmation_row]
                 )
             
-            # Bottom-right: Transaction history
-            with gr.Group(elem_classes=["sidebar-box"]):
+            # Middle/bottom-right: Transaction history
+            with gr.Group(elem_classes=["sidebar-box", "history-box"]):
                 refresh_tx_btn = gr.Button("Refresh Transactions")
+                tx_history.render()
                 
                 # Connect refresh button
                 refresh_tx_btn.click(
