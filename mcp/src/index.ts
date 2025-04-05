@@ -8,6 +8,19 @@ import { Web3 } from "web3";
 import { z } from "zod";
 import axios from "axios";
 
+const approveABI = [{
+  "constant": false,
+  "inputs": [
+      { "name": "spender", "type": "address" },
+      { "name": "amount", "type": "uint256" }
+  ],
+  "name": "approve",
+  "outputs": [{ "name": "", "type": "bool" }],
+  "payable": false,
+  "stateMutability": "nonpayable",
+  "type": "function"
+}];
+
 function getRandomBytes32() {
   // for some reason the cross-chain-sdk expects a leading 0x and can't handle a 32 byte long hex string
   return '0x' + Buffer.from(randomBytes(32)).toString('hex');
@@ -298,6 +311,70 @@ const server = new McpServer({
   },
 });
 
+async function swap(
+  fromTokenAddress: string,
+  toTokenAddress: string,
+  chainid: number,
+  amount: number,
+  decimal: number,
+  walletAddress: string,
+  privateKey: string,
+) {
+  let nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/"
+  if (chainid == NetworkEnum.ARBITRUM){
+    nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
+  } else if (chainid == NetworkEnum.OPTIMISM){
+    nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
+  } else if (chainid ===NetworkEnum.POLYGON){
+    nodeRpc = "https://polygon-mainnet.g.alchemy.com/v2/";
+  } else if (chainid == NetworkEnum.COINBASE){
+    nodeRpc = "https://base-mainnet.g.alchemy.com/v2/";
+  } else if (chainid == NetworkEnum.BINANCE){
+    nodeRpc = "https://bnb-mainnet.g.alchemy.com/v2/";
+  } else if (chainid == NetworkEnum.AVALANCHE){
+    nodeRpc = "https://avax-mainnet.g.alchemy.com/v2/";
+  } else if (chainid == NetworkEnum.GNOSIS){
+    nodeRpc = "https://gnosis-mainnet.g.alchemy.com/v2/"
+  }
+  const ethersRpcProvider = new JsonRpcProvider(nodeRpc + ENV.ALCHEMY_APIKEY);
+
+  const ethersProviderConnector: Web3Like = {
+      eth: {
+          call(transactionConfig): Promise<string> {
+              return ethersRpcProvider.call(transactionConfig)
+          }
+      },
+      extend(): void {}
+  }
+  
+  const blockchainProvider = new PrivateKeyProviderConnector(privateKey, ethersProviderConnector);
+
+  // Approve tokens for spending.
+  // If you need to approve the tokens before posting an order, this code can be uncommented for first run.
+  const tkn = new Contract(fromTokenAddress, approveABI, new Wallet(privateKey, ethersRpcProvider));
+  await tkn.approve(
+      '0x111111125421ca6dc452d289314280a0f8842a65', // aggregation router v6
+      (2n**256n - 1n) // unlimited allowance
+  );
+
+  const sdk = new FusionSDK({
+    url: "https://api.1inch.dev/fusion",
+    network: chainid,
+    authKey: ENV.ONEINCH_APIKEY,
+    blockchainProvider
+  });
+
+  const params = {
+    fromTokenAddress,
+    toTokenAddress,
+    amount: (amount * 10 ** decimal).toString(),
+    walletAddress
+  }
+
+  sdk.placeOrder(params).then(console.log)
+}
+
+
 async function crossChainSwap(
   fromChainId: number,
   toChainId: number,
@@ -308,25 +385,9 @@ async function crossChainSwap(
   walletAddress: string,
   privateKey: string,
 ) {
-
-  const approveABI = [{
-    "constant": false,
-    "inputs": [
-        { "name": "spender", "type": "address" },
-        { "name": "amount", "type": "uint256" }
-    ],
-    "name": "approve",
-    "outputs": [{ "name": "", "type": "bool" }],
-    "payable": false,
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }];
-
   let nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/"
 
-  if (fromChainId === NetworkEnum.ETHEREUM) {
-    nodeRpc += ENV.ALCHEMY_APIKEY;
-  } else if (fromChainId === NetworkEnum.ARBITRUM){
+  if (fromChainId === NetworkEnum.ARBITRUM){
     nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
   } else if (fromChainId === NetworkEnum.OPTIMISM){
     nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
@@ -413,6 +474,7 @@ async function crossChainSwap(
                     if (order.status === 'executed') {
                         console.log(`Order is complete. Exiting.`);
                         clearInterval(intervalId);
+                        return "Crosschain swap completed"
                     }
                 }
             ).catch(error =>
@@ -426,7 +488,7 @@ async function crossChainSwap(
                             sdk.submitSecret(orderHash, secrets[fill.idx])
                                 .then(() => {
                                     console.log(`Fill order found! Secret submitted: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
-                                    
+                
                                 })
                                 .catch((error) => {
                                     console.error(`Error submitting secret: ${JSON.stringify(error, null, 2)}`);
@@ -443,21 +505,26 @@ async function crossChainSwap(
                             statusText: error.response.statusText,
                             data: error.response.data
                         });
+                        return 'Error getting ready to accept secret fills'
                     } else if (error.request) {
                         // The request was made but no response was received
                         console.error('No response received:', error.request);
+                        return 'No response received when submitting secret'
                     } else {
                         // Something happened in setting up the request that triggered an Error
                         console.error('Error', error.message);
+                        return 'Error when submitting secret'
                     }
                 });
         }, 5000);
-    }).catch((error) => {
-        console.dir(error, { depth: null });
-    });
-}).catch((error) => {
-    console.dir(error, { depth: null });
-});
+      }).catch((error) => {
+          console.dir(error, { depth: null });
+          return "Error placing order"
+      });
+  }).catch((error) => {
+      console.dir(error, { depth: null });
+      return "Error getting quote"
+  });
 }
 
 server.tool(
@@ -661,13 +728,15 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // console.log("Crypto MCP Server running on stdio");
-  // console.log(await getSwapQuote(
-  //   "0xdac17f958d2ee523a2206206994597c13d831ec7", 
-  //   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 
-  //   1, 
-  //   100, 
-  //   6
-  // ))
+  console.log(await swap(
+    "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 
+    "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 
+    42161,
+    1,
+    6,
+    "0x2251a41d1ba5f9aff0769be0c22ef1b522c308dd",
+    "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c6945"
+  ))
   // console.log(await getCrosschainSwapQuote(1, 10, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", 100))
 }
 
