@@ -19,6 +19,80 @@ async function getEnsAddress(ensDomain: string) {
   return address;
 }
 
+// New function #1: Get tokens owned by account
+async function getTokensOwnedByAccount(accountAddress: string, contractAddresses?: string[]) {
+  const url = "https://web3.nodit.io/v1/ethereum/mainnet/token/getTokensOwnedByAccount";
+
+  const request: Record<string, any> = {
+    accountAddress: accountAddress
+  };
+  
+  if (contractAddresses && contractAddresses.length > 0) {
+    request.contractAddresses = contractAddresses;
+  }
+  
+  try {
+      const response = await axios.post(url, request, {
+          headers: {
+              "Content-Type": "application/json",
+              "X-API-KEY": ENV.NODIT_APIKEY,
+          }
+      });
+      return response.data;
+  } catch (error) {
+      return error;
+  }
+}
+
+// New function #2: Get transactions in block
+async function getTransactionsInBlock(block: string, withLogs = true) {
+  const url = "https://web3.nodit.io/v1/ethereum/mainnet/blockchain/getTransactionsInBlock";
+  
+  const request = {
+      block: block,
+      withLogs: withLogs,
+  };
+  
+  try {
+      const response = await axios.post(url, request, {
+          headers: {
+              "Content-Type": "application/json",
+              "X-API-KEY": ENV.NODIT_APIKEY,
+          }
+      });
+      return response.data;
+  } catch (error) {
+      return error;
+  }
+}
+
+// New function #3: Get gas price for various protocols
+async function getGasPrice(protocol: string) {
+  // Validate protocol
+  const validProtocols = ["ethereum", "arbitrum", "optimism", "base"];
+  if (!validProtocols.includes(protocol)) {
+      return {
+          error: true,
+          message: `Invalid protocol: ${protocol}. Must be one of: ${validProtocols.join(", ")}`
+      };
+  }
+  
+  const url = `https://web3.nodit.io/v1/${protocol}/mainnet/blockchain/getGasPrice`;
+  
+  try {
+      const response = await axios.post(url, {}, {
+          headers: {
+              "accept": "application/json",
+              "Content-Type": "application/json",
+              "X-API-KEY": ENV.NODIT_APIKEY,
+          }
+      });
+      return response.data;
+  } catch (error) {
+      return error;
+  }
+}
+
 async function getPortfolioData(addresses: string[], chainid: number) {
   const url = "https://api.1inch.dev/portfolio/portfolio/v4/overview/protocols/current_value";
 
@@ -530,6 +604,58 @@ server.tool(
     };
   } 
 )
+
+// Add new tool #1: getTokensOwnedByAccount
+server.tool(
+  "getTokensOwnedByAccount", 
+  "Get all tokens owned by a specific Ethereum address", 
+  {
+    accountAddress: z.string().describe("The Ethereum address to check token ownership for"),
+    contractAddresses: z.array(z.string()).optional().describe("Optional list of specific token contract addresses to check"),
+  }, 
+  async ({ accountAddress, contractAddresses }) => {
+    const tokenData = await getTokensOwnedByAccount(accountAddress, contractAddresses);
+    
+    return {
+      content: [
+          {
+            type: "text",
+            text: JSON.stringify(tokenData) || "Cannot fetch token ownership data",
+          },
+      ],
+  };
+});
+
+// Add new tool #2: getTransactionsInBlock
+server.tool("getTransactionsInBlock", "Get all transactions from a specific Ethereum block", {
+  block: z.string().describe("Block number, hash, or tag (e.g., 'latest')"),
+  withLogs: z.boolean().optional().default(true).describe("Whether to include logs in the response"),
+}, async ({ block, withLogs }) => {
+  const blockData = await getTransactionsInBlock(block, withLogs);
+  return {
+      content: [
+          {
+              type: "text",
+              text: JSON.stringify(blockData) || "Cannot fetch block transaction data",
+          },
+      ],
+  };
+});
+
+// Add new tool #3: getGasPrice
+server.tool("getGasPrice", "Get current gas price for a specific blockchain protocol", {
+  protocol: z.enum(["ethereum", "arbitrum", "optimism", "base"]).describe("Blockchain protocol (ethereum, arbitrum, optimism, or base)"),
+}, async ({ protocol }) => {
+  const gasData = await getGasPrice(protocol);
+  return {
+      content: [
+          {
+              type: "text",
+              text: JSON.stringify(gasData) || "Cannot fetch gas price data",
+          },
+      ],
+  };
+});
 
 async function main() {
   const transport = new StdioServerTransport();
