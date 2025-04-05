@@ -1,11 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SDK } from "@1inch/cross-chain-sdk";
-import { FusionSDK, NetworkEnum } from "@1inch/fusion-sdk";
+import { SDK, HashLock, PrivateKeyProviderConnector, NetworkEnum } from "@1inch/cross-chain-sdk";
+import { FusionSDK } from "@1inch/fusion-sdk";
 import { ENV } from './env';
-import { ethers } from 'ethers';
+import { ethers, solidityPackedKeccak256, randomBytes, Contract, Wallet, JsonRpcProvider } from 'ethers';
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import Web3 from "web3";
 import { z } from "zod";
 import axios from "axios";
+
+function getRandomBytes32() {
+  // for some reason the cross-chain-sdk expects a leading 0x and can't handle a 32 byte long hex string
+  return '0x' + Buffer.from(randomBytes(32)).toString('hex');
+}
 
 async function getEnsAddress(ensDomain: string) {
   const provider = new ethers.JsonRpcProvider("https://eth-mainnet.g.alchemy.com/v2/" + ENV.ALCHEMY_APIKEY);
@@ -217,6 +223,115 @@ const server = new McpServer({
     tools: {},
   },
 });
+
+async function crossChainSwap(
+  fromChainId: number,
+  toChainId: number,
+  fromTokenAddress: string,
+  toTokenAddress: string,
+  amount: number,
+  decimal: number,
+  walletAddress: string,
+  privateKey: string,
+) {
+
+  const web3Instance = new Web3("https://eth.llamarpc.com");
+  const blockchainProvider = new PrivateKeyProviderConnector(privateKey, web3Instance);
+  const sdk = new SDK({
+    url: "https://api.1inch.dev/fusion-plus",
+    authKey: ENV.ONEINCH_APIKEY,
+    blockchainProvider
+  });
+
+  const params = {
+    srcChainId: fromChainId,
+    dstChainId: toChainId,
+    srcTokenAddress: fromTokenAddress,
+    dstTokenAddress: toTokenAddress,
+    amount: (amount * 10 ** decimal).toString(),
+  }
+
+  sdk.getQuote(params).then(quote => {
+    const secretsCount = quote.getPreset().secretsCount;
+
+    const secrets = Array.from({ length: secretsCount }).map(() => getRandomBytes32());
+    const secretHashes = secrets.map(x => HashLock.hashSecret(x));
+
+    const hashLock =
+      secretsCount === 1
+        ? HashLock.forSingleFill(secrets[0])
+        : HashLock.forMultipleFills(
+            secretHashes.map((secretHash, i) =>
+              solidityPackedKeccak256(["uint64", "bytes32"], [i, secretHash.toString()])
+            ) as (string & {
+              _tag: "MerkleLeaf";
+            })[]
+          );
+
+
+    console.log("Received Fusion+ quote from 1inch API");
+
+    sdk.placeOrder(quote, {
+        walletAddress: walletAddress,
+        hashLock,
+        secretHashes
+    }).then(quoteResponse => {
+
+        const orderHash = quoteResponse.orderHash;
+
+        console.log(`Order successfully placed`);
+
+        const intervalId = setInterval(() => {
+            console.log(`Polling for fills until order status is set to "executed"...`);
+            sdk.getOrderStatus(orderHash).then(order => {
+                    if (order.status === 'executed') {
+                        console.log(`Order is complete. Exiting.`);
+                        clearInterval(intervalId);
+                    }
+                }
+            ).catch(error =>
+                console.error(`Error: ${JSON.stringify(error, null, 2)}`)
+            );
+
+            sdk.getReadyToAcceptSecretFills(orderHash)
+                .then((fillsObject) => {
+                    if (fillsObject.fills.length > 0) {
+                        fillsObject.fills.forEach(fill => {
+                            sdk.submitSecret(orderHash, secrets[fill.idx])
+                                .then(() => {
+                                    console.log(`Fill order found! Secret submitted: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
+                                })
+                                .catch((error) => {
+                                    console.error(`Error submitting secret: ${JSON.stringify(error, null, 2)}`);
+                                });
+                        });
+                    }
+                })
+                .catch((error) => {
+                    if (error.response) {
+                        // The request was made and the server responded with a status code
+                        // that falls out of the range of 2xx
+                        console.error('Error getting ready to accept secret fills:', {
+                            status: error.response.status,
+                            statusText: error.response.statusText,
+                            data: error.response.data
+                        });
+                    } else if (error.request) {
+                        // The request was made but no response was received
+                        console.error('No response received:', error.request);
+                    } else {
+                        // Something happened in setting up the request that triggered an Error
+                        console.error('Error', error.message);
+                    }
+                });
+        }, 5000);
+    }).catch((error) => {
+        console.dir(error, { depth: null });
+    });
+}).catch((error) => {
+    console.dir(error, { depth: null });
+});
+}
 
 server.tool(
   "resolveEnsDomain",
