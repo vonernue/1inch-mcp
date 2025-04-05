@@ -26,6 +26,140 @@ server_params = StdioServerParameters(
     env=None,  # Optional environment variables
 )
 
+# Function to fetch wallet token balances
+def fetch_wallet_balances(wallet_address):
+    """
+    Fetches token balances for a wallet address using Etherscan API
+    Returns formatted markdown with token balances
+    """
+    if not wallet_address:
+        return "No wallet address provided"
+    
+    try:
+        # You should register for an Etherscan API key for production use
+        etherscan_api_key = os.getenv("ETHERSCAN_API_KEY", "YourApiKeyToken")  # Replace with your API key
+        
+        # First, get ETH balance
+        eth_balance_url = f"https://api.etherscan.io/api?module=account&action=balance&address={wallet_address}&tag=latest&apikey={etherscan_api_key}"
+        eth_response = requests.get(eth_balance_url)
+        eth_data = eth_response.json()
+        
+        # Format ETH balance (convert from wei to ETH)
+        if eth_data.get("status") == "1":
+            eth_balance = float(eth_data.get("result", "0")) / 10**18  # Convert wei to ETH
+        else:
+            eth_balance = 0
+        
+        # Get ERC-20 token balances
+        token_url = f"https://api.etherscan.io/api?module=account&action=tokentx&address={wallet_address}&startblock=0&endblock=999999999&sort=desc&apikey={etherscan_api_key}"
+        token_response = requests.get(token_url)
+        token_data = token_response.json()
+        
+        # Create a dictionary to store unique tokens and their latest balance
+        tokens = {}
+        
+        if token_data.get("status") == "1":
+            for tx in token_data.get("result", []):
+                token_symbol = tx.get("tokenSymbol")
+                token_name = tx.get("tokenName")
+                token_decimals = int(tx.get("tokenDecimal", "18"))
+                
+                # Only process each token once (we just want a list of tokens)
+                if token_symbol not in tokens:
+                    # Now get the actual balance for this token
+                    token_balance_url = f"https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress={tx.get('contractAddress')}&address={wallet_address}&tag=latest&apikey={etherscan_api_key}"
+                    balance_response = requests.get(token_balance_url)
+                    balance_data = balance_response.json()
+                    
+                    if balance_data.get("status") == "1":
+                        raw_balance = int(balance_data.get("result", "0"))
+                        # Convert based on token decimals
+                        balance = raw_balance / (10 ** token_decimals)
+                        
+                        # Only add tokens with non-zero balance
+                        if balance > 0:
+                            tokens[token_symbol] = {
+                                "name": token_name,
+                                "symbol": token_symbol,
+                                "balance": balance
+                            }
+        
+        # Format the balances as nice Markdown
+        if eth_balance > 0 or tokens:
+            balances_text = "## Wallet Balances\n\n"
+            balances_text += f"**Address**: {wallet_address[:6]}...{wallet_address[-4:]}\n\n"
+            
+            # Add ETH balance
+            if eth_balance > 0:
+                balances_text += f"**ETH**: {eth_balance:.4f}\n\n"
+            
+            # Add token balances
+            for symbol, data in tokens.items():
+                balances_text += f"**{symbol}**: {data['balance']:.4f}\n\n"
+            
+            return balances_text
+        else:
+            return f"## Wallet Balances\n\n**Address**: {wallet_address[:6]}...{wallet_address[-4:]}\n\nNo tokens found for this address"
+            
+    except Exception as e:
+        return f"Error fetching wallet balances: {str(e)}"
+
+# Function to fetch transaction history from 1inch API (updated)
+def fetch_transaction_history(wallet_address):
+    if not wallet_address:
+        return "Please enter a wallet address in settings"
+    
+    try:
+        # Since 1inch API endpoints might change, we'll use Etherscan for transaction history 
+        # which is more reliable for this demo purpose
+        etherscan_api_key = os.getenv("ETHERSCAN_API_KEY", "YourApiKeyToken")  # Replace with your API key
+        
+        # Get normal transactions
+        tx_url = f"https://api.etherscan.io/api?module=account&action=txlist&address={wallet_address}&startblock=0&endblock=99999999&page=1&offset=5&sort=desc&apikey={etherscan_api_key}"
+        response = requests.get(tx_url)
+        tx_data = response.json()
+        
+        if tx_data.get("status") == "1":
+            transactions = tx_data.get("result", [])
+            
+            # Format transactions for display
+            transaction_text = "## Recent Transactions\n\n"
+            
+            if not transactions:
+                return f"## Recent Transactions\n\nNo transactions found for {wallet_address}"
+                
+            for tx in transactions[:5]:  # Show last 5 transactions
+                tx_hash = tx.get("hash", "Unknown")
+                tx_time = tx.get("timeStamp", "Unknown")
+                # Convert Unix timestamp to readable format
+                if tx_time != "Unknown":
+                    from datetime import datetime
+                    tx_time = datetime.fromtimestamp(int(tx_time)).strftime('%Y-%m-%d %H:%M:%S')
+                
+                tx_status = "Success" if tx.get("txreceipt_status") == "1" else "Failed"
+                tx_from = tx.get("from", "Unknown")
+                tx_to = tx.get("to", "Unknown")
+                tx_value = float(tx.get("value", "0")) / 10**18  # Convert wei to ETH
+                
+                # Determine transaction type
+                if tx_from.lower() == wallet_address.lower():
+                    tx_type = "Sent"
+                    tx_partner = tx_to
+                else:
+                    tx_type = "Received"
+                    tx_partner = tx_from
+                
+                transaction_text += f"- **{tx_type} {tx_value:.4f} ETH** ({tx_status})\n"
+                transaction_text += f"  To/From: {tx_partner[:10]}...{tx_partner[-6:]}\n"
+                transaction_text += f"  Hash: {tx_hash[:10]}...{tx_hash[-6:]}\n"
+                transaction_text += f"  Time: {tx_time}\n\n"
+                
+            return transaction_text
+        else:
+            return f"## Transaction History\n\nError fetching transactions: {tx_data.get('message', 'Unknown error')}"
+    except Exception as e:
+        return f"## Transaction History\n\nError: {str(e)}"
+
 # Private key confirmation function
 def use_pvkey(private_key, operation_name, confirm=None):
     """
@@ -41,63 +175,13 @@ def use_pvkey(private_key, operation_name, confirm=None):
     """
     if confirm is None:
         # Initiate confirmation request
-        return f"Waiting for confirmation to perform: {operation_name}", None, True, gr.update(visible=True)
+        return f"Waiting for confirmation to perform: {operation_name}", None, True, gr.update(visible=True, elem_classes=["confirmation-row", "visible"])
     elif confirm:
         # Confirmation approved
-        return f"Operation '{operation_name}' confirmed", private_key, False, gr.update(visible=False)
+        return f"Operation '{operation_name}' confirmed", private_key, False, gr.update(visible=False, elem_classes=["confirmation-row"])
     else:
         # Confirmation rejected
-        return f"Operation cancelled", None, False, gr.update(visible=False)
-
-# Function to fetch transaction history from 1inch API
-def fetch_transaction_history(wallet_address):
-    if not wallet_address:
-        return "Please enter a wallet address in settings"
-    
-    try:
-        # Using the 1inch explorer API (you may need to adjust the endpoint)
-        # The Ethereum mainnet chain ID is 1
-        chain_id = 1
-        base_url = f"https://api.1inch.dev/tx-history/v1/transactions?chain={chain_id}&address={wallet_address}&limit=5"
-        
-        # In a production environment, you would need to add an API key
-        headers = {
-            "Accept": "application/json",
-            # "Authorization": "Bearer YOUR_API_KEY" # Uncomment and add your API key
-        }
-        
-        response = requests.get(base_url, headers=headers)
-        
-        if response.status_code == 200:
-            transactions = response.json()
-            # Format transactions for display
-            transaction_text = "## Recent Transactions\n\n"
-            
-            if not transactions or len(transactions.get("items", [])) == 0:
-                return f"## Recent Transactions\n\nNo transactions found for {wallet_address}"
-                
-            for tx in transactions.get("items", [])[:5]:
-                tx_hash = tx.get("hash", "Unknown")
-                tx_time = tx.get("timeStamp", "Unknown")
-                tx_status = "Success" if tx.get("success") else "Failed"
-                
-                # Get the transaction description
-                tx_desc = "Unknown transaction"
-                if "swapDescription" in tx:
-                    swap = tx["swapDescription"]
-                    from_token = swap.get("fromToken", {}).get("symbol", "Unknown")
-                    to_token = swap.get("toToken", {}).get("symbol", "Unknown")
-                    tx_desc = f"Swap {from_token} to {to_token}"
-                
-                transaction_text += f"- **{tx_desc}** ({tx_status})\n"
-                transaction_text += f"  Hash: {tx_hash[:10]}...{tx_hash[-6:]}\n"
-                transaction_text += f"  Time: {tx_time}\n\n"
-                
-            return transaction_text
-        else:
-            return f"## Transaction History\n\nError fetching transactions: {response.status_code}"
-    except Exception as e:
-        return f"## Transaction History\n\nError: {str(e)}"
+        return f"Operation cancelled", None, False, gr.update(visible=False, elem_classes=["confirmation-row"])
 
 # Chat function for Gradio
 async def chat_bot(message, history):
@@ -206,9 +290,11 @@ def save_settings(private_key, wallet_address=None):
     except Exception as e:
         status_msg = f"⚠️ Error processing private key: {str(e)}"
     
-    # Fetch transaction history if wallet address is provided
+    # Fetch wallet balances and transaction history if wallet address is provided
+    balance_text = fetch_wallet_balances(wallet_address) if wallet_address else "No wallet address provided"
     transaction_history = fetch_transaction_history(wallet_address) if wallet_address else "No wallet address provided"
-    return private_key, wallet_address, status_msg, transaction_history
+    
+    return private_key, wallet_address, status_msg, balance_text, transaction_history
 
 # Example function that requires private key
 def sign_transaction(wallet_address, private_key=None, tx_data=None):
@@ -222,50 +308,103 @@ def sign_transaction(wallet_address, private_key=None, tx_data=None):
     # If we have the private key, perform the actual operation
     # In a real implementation, you would use web3 or another library to sign the transaction
     signed_tx = f"Transaction signed with private key for address {wallet_address}"
-    return "Transaction signed successfully", None, False, gr.update(visible=False), signed_tx
+    
+    # After successful operation, display the wallet balances again
+    balance_text = fetch_wallet_balances(wallet_address)
+    return balance_text, None, False, gr.update(visible=False), signed_tx
 
 # Create the Gradio interface
 with gr.Blocks(title="WalletPilot", css="""
+    /* Dark mode theme */
+    body {
+        background-color: #121212;
+        color: #f0f0f0;
+    }
+    
+    /* Sidebar boxes */
     .sidebar-box {
         border-radius: 8px;
         margin-bottom: 20px;
-        background-color: #f9f9f9;
-        border: 1px solid #e0e0e0;
+        background-color: #2a2a2a;
+        border: 1px solid #444;
+        color: #f0f0f0;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
     }
     .sidebar-box h2 {
         font-size: 1.2em;
         padding: 10px;
         margin: 0;
-        background-color: #f0f0f0;
-        border-bottom: 1px solid #e0e0e0;
+        background-color: #1a1a1a;
+        border-bottom: 1px solid #444;
         border-radius: 8px 8px 0 0;
+        color: #ffffff;
     }
+    
+    /* Confirmation row and buttons */
     .confirmation-row {
         display: flex;
         gap: 10px;
         padding: 10px;
+        visibility: hidden; /* Hide by default */
+    }
+    .confirmation-row.visible {
+        visibility: visible;
     }
     .confirm-btn {
         background-color: #4CAF50 !important;
         color: white !important;
+        font-weight: bold;
+        padding: 8px 16px;
+        border-radius: 4px;
     }
     .cancel-btn {
         background-color: #f44336 !important;
         color: white !important;
+        font-weight: bold;
+        padding: 8px 16px;
+        border-radius: 4px;
     }
+    .refresh-btn {
+        background-color: #2196F3 !important;
+        color: white !important;
+        font-weight: bold;
+        padding: 6px 12px;
+        border-radius: 4px;
+        margin: 10px;
+    }
+    
+    /* Wallet balance display */
     .confirmation-box {
         aspect-ratio: 1/1;
         min-height: 200px;
         max-height: 300px;
         display: flex;
         flex-direction: column;
+        padding: 0;
+        overflow: hidden;
     }
     .confirmation-box > .prose {
         flex-grow: 1;
         display: flex;
-        align-items: center;
-        justify-content: center;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+        color: #f0f0f0;
+        padding: 15px;
+        overflow-y: auto;
     }
+    /* Token balance styling */
+    .confirmation-box > .prose p {
+        margin: 5px 0;
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+    }
+    .confirmation-box > .prose strong {
+        color: #64b5f6;
+    }
+    
+    /* Transaction history layout */
     .history-box {
         min-height: 400px;
         display: flex;
@@ -274,22 +413,37 @@ with gr.Blocks(title="WalletPilot", css="""
     .history-box > .prose {
         flex-grow: 1;
         overflow-y: auto;
+        color: #f0f0f0;
+        padding: 15px;
+    }
+    .history-box > .prose strong {
+        color: #81c784;
+    }
+    
+    /* Fix for duplicate components and ensuring visibility */
+    .container:first-child > .prose {
+        display: none;
+    }
+    .sidebar-box .prose {
+        display: block !important;
+    }
+    
+    /* Make inputs and buttons look better in dark mode */
+    input, textarea {
+        background-color: #333 !important;
+        color: #f0f0f0 !important;
+        border: 1px solid #555 !important;
+    }
+    button {
+        background-color: #444 !important;
+        color: #f0f0f0 !important;
     }
 """) as app:
+    # State variables
     privateKeyState = gr.State("")
     walletAddressState = gr.State("")
     pvkey_needs_confirmation = gr.State(False)
     current_operation = gr.State("")
-    
-    # Function to initiate a private key operation from anywhere in the app
-    def request_pvkey_confirmation(operation):
-        result = use_pvkey(None, operation)
-        return result[0], operation, result[2], result[3]
-    
-    # Create shared components that will be referenced in multiple places
-    tx_history = gr.Markdown("## Transaction History\n\nNo wallet address provided")
-    pvkey_operation = gr.Markdown("No operations requiring private key")
-    confirmation_row = gr.Row(visible=False, elem_classes=["confirmation-row"])
     
     with gr.Row():
         # Left panel for main content
@@ -325,52 +479,84 @@ with gr.Blocks(title="WalletPilot", css="""
                     sign_tx_btn = gr.Button("Sign Transaction")
                     tx_status = gr.Textbox(label="Transaction Status", interactive=False)
 
-                    save_btn.click(
-                        fn=save_settings,
-                        inputs=[private_key, wallet_address],
-                        outputs=[privateKeyState, walletAddressState, settings_output, tx_history]
-                    )
-                    
-                    sign_tx_btn.click(
-                        fn=sign_transaction,
-                        inputs=[walletAddressState, privateKeyState, tx_data],
-                        outputs=[pvkey_operation, current_operation, pvkey_needs_confirmation, confirmation_row, tx_status]
-                    )
-        
         # Right panel for confirmation and history
         with gr.Column(scale=1):
-            # Top-right: Square-shaped private key confirmation
+            # Top-right: Balance display or confirmation dialog
             with gr.Group(elem_classes=["sidebar-box", "confirmation-box"]):
-                pvkey_prompt = gr.Markdown("## Private Key Operations")
-                pvkey_operation.render()
+                gr.Markdown("## Wallet Information")
+                wallet_info = gr.Markdown("No wallet address provided")
                 
+                # Add confirmation row for private key operations
+                confirmation_row = gr.Row(visible=False, elem_classes=["confirmation-row"])
                 with confirmation_row:
                     confirm_btn = gr.Button("Confirm", variant="primary", elem_classes=["confirm-btn"])
                     cancel_btn = gr.Button("Cancel", variant="secondary", elem_classes=["cancel-btn"])
-                
-                # Connect buttons to the confirmation function
-                confirm_btn.click(
-                    fn=use_pvkey,
-                    inputs=[privateKeyState, current_operation, gr.Checkbox(value=True, visible=False)],
-                    outputs=[pvkey_operation, current_operation, pvkey_needs_confirmation, confirmation_row]
-                )
-                
-                cancel_btn.click(
-                    fn=use_pvkey,
-                    inputs=[privateKeyState, current_operation, gr.Checkbox(value=False, visible=False)],
-                    outputs=[pvkey_operation, current_operation, pvkey_needs_confirmation, confirmation_row]
-                )
             
             # Middle/bottom-right: Transaction history
             with gr.Group(elem_classes=["sidebar-box", "history-box"]):
-                refresh_tx_btn = gr.Button("Refresh Transactions")
-                tx_history.render()
-                
-                # Connect refresh button
-                refresh_tx_btn.click(
-                    fn=fetch_transaction_history,
-                    inputs=[walletAddressState],
-                    outputs=[tx_history]
-                )
+                gr.Markdown("## Transaction History")
+                transactions = gr.Markdown("No wallet address provided")
+                refresh_tx_btn = gr.Button("Refresh Transactions", elem_classes=["refresh-btn"])
+    
+    # Updated custom functions to use the new component names
+
+    # Modified save_settings function to use the new component names
+    def modified_save_settings(private_key, wallet_address):
+        result = save_settings(private_key, wallet_address)
+        return result[0], result[1], result[2], result[3], result[4]  # privateKey, walletAddress, status, balances, transactions
+    
+    # Modified sign_transaction function to use the new component names
+    def modified_sign_tx(wallet_address, private_key, tx_data):
+        if private_key is None:
+            # If private key not provided, initiate confirmation
+            operation_name = f"Sign transaction from {wallet_address}"
+            result = use_pvkey(None, operation_name)
+            return result[0], result[1], result[2], result[3], None  # message, key, needs_confirm, confirm_row, status
+        
+        # If we have the private key, perform the actual operation
+        signed_tx = f"Transaction signed with private key for address {wallet_address}"
+        balance_text = fetch_wallet_balances(wallet_address)
+        return balance_text, None, False, gr.update(visible=False), signed_tx
+    
+    # Modified use_pvkey for confirmation handling
+    def modified_use_pvkey(private_key, operation_name, confirm):
+        result = use_pvkey(private_key, operation_name, confirm)
+        return result[0], result[1], result[2], result[3]  # message, key, needs_confirm, confirm_row
+    
+    # Connect all the event handlers
+    
+    # Connect save button
+    save_btn.click(
+        fn=modified_save_settings,
+        inputs=[private_key, wallet_address],
+        outputs=[privateKeyState, walletAddressState, settings_output, wallet_info, transactions]
+    )
+    
+    # Connect sign transaction button
+    sign_tx_btn.click(
+        fn=modified_sign_tx,
+        inputs=[walletAddressState, privateKeyState, tx_data],
+        outputs=[wallet_info, current_operation, pvkey_needs_confirmation, confirmation_row, tx_status]
+    )
+    
+    # Connect confirmation buttons
+    confirm_btn.click(
+        fn=modified_use_pvkey,
+        inputs=[privateKeyState, current_operation, gr.Checkbox(value=True, visible=False)],
+        outputs=[wallet_info, current_operation, pvkey_needs_confirmation, confirmation_row]
+    )
+    
+    cancel_btn.click(
+        fn=modified_use_pvkey,
+        inputs=[privateKeyState, current_operation, gr.Checkbox(value=False, visible=False)],
+        outputs=[wallet_info, current_operation, pvkey_needs_confirmation, confirmation_row]
+    )
+    
+    # Connect refresh button
+    refresh_tx_btn.click(
+        fn=fetch_transaction_history,
+        inputs=[walletAddressState],
+        outputs=[transactions]
+    )
 
 app.launch()
