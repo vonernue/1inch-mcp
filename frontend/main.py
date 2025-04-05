@@ -2,46 +2,31 @@ import gradio as gr
 import os
 import requests
 import json
+import anthropic
+import asyncio
 from dotenv import load_dotenv
+from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.stdio import stdio_client
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Get API key from environment variables
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-if not ANTHROPIC_API_KEY:
-    raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+client = anthropic.Anthropic()
 
 # Claude API settings
-API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = "claude-3-7-sonnet-20250219"
-HEADERS = {
-    "x-api-key": ANTHROPIC_API_KEY,
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json"
-}
 
 # Define system prompt in code
-SYSTEM_PROMPT = "You are a helpful, harmless, and honest AI assistant. Answer questions accurately and be concise in your responses."
+SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
 
-# Function to call Claude API
-def call_claude_api(messages):
-    payload = {
-        "model": MODEL,
-        "max_tokens": 1024,
-        "messages": messages,
-        "system": SYSTEM_PROMPT
-    }
-    
-    try:
-        response = requests.post(API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        return response.json()["content"][0]["text"]
-    except Exception as e:
-        return f"Error: {str(e)}"
+server_params = StdioServerParameters(
+    command="node",  # Executable
+    args=["../mcp/build/index.js"],  # Optional command line arguments
+    env=None,  # Optional environment variables
+)
 
 # Chat function for Gradio
-def chat_bot(message, history):
+async def chat_bot(message, history):
     # Construct messages from history
     messages = []
     for human, assistant in history:
@@ -52,9 +37,73 @@ def chat_bot(message, history):
     # Add the current message
     messages.append({"role": "user", "content": message})
     
-    # Call Claude API
-    response = call_claude_api(messages)
-    return response
+    response = ""
+    async with stdio_client(server_params) as (read, write):
+        # Call Claude API
+        async with ClientSession(
+            read, write
+        ) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            available_tools = [{
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            } for tool in tools.tools]
+
+            response = client.messages.create(
+                system=SYSTEM_PROMPT,
+                model=MODEL,
+                max_tokens=1024,
+                messages=messages,
+                tools=available_tools
+            )
+
+            # Process response and handle tool calls
+            final_text = []
+
+            assistant_message_content = []
+            for content in response.content:
+                if content.type == 'text':
+                    final_text.append(content.text)
+                    assistant_message_content.append(content)
+                    yield "\n".join(final_text)
+                elif content.type == 'tool_use':
+                    tool_name = content.name
+                    tool_args = content.input
+
+                    # Execute tool call
+                    result = await session.call_tool(tool_name, tool_args)
+                    final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+
+                    assistant_message_content.append(content)
+                    messages.append({
+                        "role": "assistant",
+                        "content": assistant_message_content
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": content.id,
+                                "content": result.content
+                            }
+                        ]
+                    })
+
+                    # Get next response from Claude
+                    response = client.messages.create(
+                        model=MODEL,
+                        max_tokens=1024,
+                        messages=messages,
+                        tools=available_tools
+                    )
+
+                    final_text.append(response.content[0].text)
+                    yield "\n".join(final_text)
+
+            yield "\n".join(final_text)
 
 # Create the Gradio interface
 with gr.Blocks(title="Claude Chat Interface") as app:
