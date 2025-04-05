@@ -398,13 +398,13 @@ def fetch_transaction_history_another(wallet_address, chainId="1") -> Dict[str] 
 
                 tx_hash = tx['txHash']
                 tx_type = tx['type']
-                tx_time = datetime.fromtimestamp(tx['timeMs'] / 1000.0)
+                tx_time = datetime.fromtimestamp(trans['timeMs'] / 1000.0)
                 to_addr = tx['fromAddress']
                 from_addr = tx['toAddress']
                 tx_val = tx['tokenActions'][0]['amount']
                 token_id = tx['tokenActions'][0].get('tokenId', 'NA')
 
-                markdown += f"- **{tx_type} {tx_val:.4f} {token_id}**\n"
+                markdown += f"- **{tx_type} {tx_val} {token_id}**\n"
                 markdown += f"  To/From: {to_addr} {from_addr}\n"
                 markdown += f"  Hash: {tx_hash}\n"
                 markdown += f"  Time: {tx_time}\n\n"
