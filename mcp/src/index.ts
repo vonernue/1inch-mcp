@@ -573,6 +573,40 @@ async function crossChainSwap(
   });
 }
 
+async function transferNativeToken(
+  toAddress: string,
+  amount: number,
+  privateKey: string,
+  chainId: number,
+) {
+  try {
+    const nodeRpc = getNodeRpcUrl(chainId);
+    const provider = new JsonRpcProvider(nodeRpc);
+    const wallet = new Wallet(privateKey, provider);
+
+    // Convert the amount to Wei (the smallest unit)
+    const amountInWei = ethers.parseEther(amount.toString());
+
+    // Create and send the transaction
+    const tx = await wallet.sendTransaction({
+      to: toAddress,
+      value: amountInWei,
+    });
+
+    console.log(`Transaction sent: ${tx.hash}`);
+    const receipt = await tx.wait();
+    if (receipt != null) {
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+    } else {
+      console.log("Transaction was submitted but no receipt was returned");
+    }
+    return receipt;
+  } catch (error) {
+    console.error("Error transferring native token:", error);
+    return error;
+  }
+}
+
 async function transferERC20Token(
   tokenAddress: string,
   toAddress: string,
@@ -778,6 +812,28 @@ server.tool(
     };
   }
 )
+
+server.tool(
+  "transferNativeToken",
+  "Transfer Native Token (ETH, BNB, MATIC, etc.)",
+  {
+    toAddress: z.string().describe("Recipient address"),
+    amount: z.number().describe("Amount to transfer in native token units (ETH, BNB, MATIC, etc.)"),
+    privateKey: z.string().describe("Sender's private key"),
+    chainId: z.number().describe("Chain ID of the blockchain network"),
+  },
+  async ({ toAddress, amount, privateKey, chainId }) => {
+    const receipt = await transferNativeToken(toAddress, amount, privateKey, chainId);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(receipt) || "Cannot transfer native token",
+        },
+      ],
+    };
+  }
+);
 
 // Add new tool #1: getTokensOwnedByAccount
 server.tool(
