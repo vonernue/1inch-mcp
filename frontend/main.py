@@ -4,6 +4,7 @@ import requests
 import json
 import anthropic
 import asyncio
+from eth_account import Account
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
@@ -106,8 +107,13 @@ async def chat_bot(message, history):
             yield "\n".join(final_text)
 
 def save_settings(private_key):
-    return private_key
-
+    try:
+        acct = Account.from_key(private_key)
+        public_key = acct.address
+        return private_key, public_key
+    except Exception as e:
+        return private_key, f"Error: {str(e)}"
+    
 # Create the Gradio interface
 with gr.Blocks(title="WalletPilot") as app:
     privateKeyState = gr.State("")
@@ -121,13 +127,19 @@ with gr.Blocks(title="WalletPilot") as app:
                 type="password",
                 placeholder="Enter your wallet private key"
             )
+            public_key = gr.Textbox(
+                label="Wallet Public Key",
+                type="text",
+                interactive=False,
+            )
+
             save_btn = gr.Button("Save Settings")
             settings_output = gr.Textbox(label="Status", interactive=False)
 
             save_btn.click(
                 fn=save_settings,
                 inputs=[private_key],
-                outputs=privateKeyState
+                outputs=[privateKeyState, public_key]
             )
             
             
@@ -137,7 +149,6 @@ with gr.Blocks(title="WalletPilot") as app:
             
             chatbot = gr.ChatInterface(
                 fn=chat_bot,
-                title="Claude Assistant"
             )
 
 app.launch()
