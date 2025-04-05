@@ -266,6 +266,8 @@ with gr.Blocks(title="WalletPilot", css="""
     
     # Create shared components that will be referenced in multiple places
     tx_history = gr.Markdown("## Transaction History\n\nNo wallet address provided")
+    pvkey_operation = gr.Markdown("No operations requiring private key")
+    confirmation_row = gr.Row(visible=False, elem_classes=["confirmation-row"])
     
     with gr.Row():
         # Main content
@@ -323,11 +325,10 @@ with gr.Blocks(title="WalletPilot", css="""
         # Right sidebar
         with gr.Column(scale=1):
             # Top-right: Private key confirmation
-            with gr.Box(elem_classes=["sidebar-box"]):
+            with gr.Group(elem_classes=["sidebar-box"]):
                 pvkey_prompt = gr.Markdown("## Private Key Operations")
-                pvkey_operation = gr.Markdown("No operations requiring private key")
                 
-                with gr.Row(visible=False, elem_classes=["confirmation-row"]) as confirmation_row:
+                with confirmation_row:
                     confirm_btn = gr.Button("Confirm", variant="primary", elem_classes=["confirm-btn"])
                     cancel_btn = gr.Button("Cancel", variant="secondary", elem_classes=["cancel-btn"])
                 
@@ -345,7 +346,7 @@ with gr.Blocks(title="WalletPilot", css="""
                 )
             
             # Bottom-right: Transaction history
-            with gr.Box(elem_classes=["sidebar-box"]):
+            with gr.Group(elem_classes=["sidebar-box"]):
                 refresh_tx_btn = gr.Button("Refresh Transactions")
                 
                 # Connect refresh button
