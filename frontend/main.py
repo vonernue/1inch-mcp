@@ -105,14 +105,39 @@ async def chat_bot(message, history):
 
             yield "\n".join(final_text)
 
+def save_settings(private_key):
+    return private_key
+
 # Create the Gradio interface
-with gr.Blocks(title="Claude Chat Interface") as app:
-    with gr.Row():
-        gr.Markdown("## Chat with Claude")
-    
-    chatbot = gr.ChatInterface(
-        fn=chat_bot,
-        title="Claude Assistant"
-    )
+with gr.Blocks(title="WalletPilot") as app:
+    privateKeyState = gr.State("")
+
+    with gr.Tabs():
+        with gr.Tab("🔧 Settings"):
+            gr.Markdown("## App Settings")
+
+            private_key = gr.Textbox(
+                label="Wallet Private Key",
+                type="password",
+                placeholder="Enter your wallet private key"
+            )
+            save_btn = gr.Button("Save Settings")
+            settings_output = gr.Textbox(label="Status", interactive=False)
+
+            save_btn.click(
+                fn=save_settings,
+                inputs=[private_key],
+                outputs=privateKeyState
+            )
+            
+            
+        with gr.Tab("💬 Chat"):
+            with gr.Row():
+                gr.Markdown("## Chat")
+            
+            chatbot = gr.ChatInterface(
+                fn=chat_bot,
+                title="Claude Assistant"
+            )
 
 app.launch()
