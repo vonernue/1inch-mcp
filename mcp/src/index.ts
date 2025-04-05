@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SDK, HashLock, PrivateKeyProviderConnector, NetworkEnum } from "@1inch/cross-chain-sdk";
-import { FusionSDK } from "@1inch/fusion-sdk";
+import { FusionSDK, Web3Like } from "@1inch/fusion-sdk";
 import { ENV } from './env';
 import { ethers, solidityPackedKeccak256, randomBytes, Contract, Wallet, JsonRpcProvider } from 'ethers';
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import Web3 from "web3";
+import { Web3 } from "web3";
 import { z } from "zod";
 import axios from "axios";
 
@@ -235,13 +235,63 @@ async function crossChainSwap(
   privateKey: string,
 ) {
 
-  const web3Instance = new Web3("https://eth.llamarpc.com");
-  const blockchainProvider = new PrivateKeyProviderConnector(privateKey, web3Instance);
+  const approveABI = [{
+    "constant": false,
+    "inputs": [
+        { "name": "spender", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+    ],
+    "name": "approve",
+    "outputs": [{ "name": "", "type": "bool" }],
+    "payable": false,
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }];
+
+  let nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/"
+
+  if (fromChainId === NetworkEnum.ETHEREUM) {
+    nodeRpc += ENV.ALCHEMY_APIKEY;
+  } else if (fromChainId === NetworkEnum.ARBITRUM){
+    nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.OPTIMISM){
+    nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.POLYGON){
+    nodeRpc = "https://polygon-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.COINBASE){
+    nodeRpc = "https://base-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.BINANCE){
+    nodeRpc = "https://bnb-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.AVALANCHE){
+    nodeRpc = "https://avax-mainnet.g.alchemy.com/v2/";
+  } else if (fromChainId === NetworkEnum.GNOSIS){
+    nodeRpc = "https://gnosis-mainnet.g.alchemy.com/"
+  }
+  const ethersRpcProvider = new JsonRpcProvider(nodeRpc + ENV.ALCHEMY_APIKEY);
+
+  const ethersProviderConnector: Web3Like = {
+      eth: {
+          call(transactionConfig): Promise<string> {
+              return ethersRpcProvider.call(transactionConfig)
+          }
+      },
+      extend(): void {}
+  }
+  
+  const blockchainProvider = new PrivateKeyProviderConnector(privateKey, ethersProviderConnector);
   const sdk = new SDK({
     url: "https://api.1inch.dev/fusion-plus",
     authKey: ENV.ONEINCH_APIKEY,
     blockchainProvider
   });
+
+  // Approve tokens for spending.
+  // If you need to approve the tokens before posting an order, this code can be uncommented for first run.
+  // const tkn = new Contract(fromTokenAddress, approveABI, new Wallet(privateKey, ethersRpcProvider));
+  // await tkn.approve(
+  //     '0x111111125421ca6dc452d289314280a0f8842a65', // aggregation router v6
+  //     (2n**256n - 1n) // unlimited allowance
+  // );
 
   const params = {
     srcChainId: fromChainId,
@@ -249,6 +299,8 @@ async function crossChainSwap(
     srcTokenAddress: fromTokenAddress,
     dstTokenAddress: toTokenAddress,
     amount: (amount * 10 ** decimal).toString(),
+    walletAddress: walletAddress,
+    enableEstimate: true,
   }
 
   sdk.getQuote(params).then(quote => {
@@ -300,6 +352,7 @@ async function crossChainSwap(
                             sdk.submitSecret(orderHash, secrets[fill.idx])
                                 .then(() => {
                                     console.log(`Fill order found! Secret submitted: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
+                                    
                                 })
                                 .catch((error) => {
                                     console.error(`Error submitting secret: ${JSON.stringify(error, null, 2)}`);
@@ -449,6 +502,33 @@ server.tool(
       ],
     };
   }
+)
+
+server.tool(
+  "crossChainSwap",
+  "Crosschain Swap",
+  {
+    fromChainId: z.number().describe("From chain ID"),
+    toChainId: z.number().describe("To chain ID"),
+    fromTokenAddress: z.string().describe("From token address"),
+    toTokenAddress: z.string().describe("To token address"),
+    amount: z.number().describe("Amount to swap"),
+    decimal: z.number().describe("The decimal of the source token"),  
+    walletAddress: z.string().describe("Wallet address"),
+    privateKey: z.string().describe("Private key"),
+  },
+  async ({ fromChainId, toChainId, fromTokenAddress, toTokenAddress, amount, decimal, walletAddress, privateKey }) => {
+    await crossChainSwap(fromChainId, toChainId, fromTokenAddress, toTokenAddress, amount, decimal, walletAddress, privateKey);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Crosschain swap started",
+        },
+      ],
+    };
+  } 
 )
 
 async function main() {
