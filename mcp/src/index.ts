@@ -8,6 +8,26 @@ import { Web3 } from "web3";
 import { z } from "zod";
 import axios from "axios";
 
+const transferABI = [
+  {
+    name: "transfer",
+    type: "function",
+    inputs: [
+      {
+        name: "recipient",
+        type: "address",
+      },
+      {
+        name: "amount",
+        type: "uint256",
+      },
+    ],
+    constant: false,
+    outputs: [],
+    payable: false,
+  },
+];
+
 const approveABI = [{
   "constant": false,
   "inputs": [
@@ -24,6 +44,28 @@ const approveABI = [{
 function getRandomBytes32() {
   // for some reason the cross-chain-sdk expects a leading 0x and can't handle a 32 byte long hex string
   return '0x' + Buffer.from(randomBytes(32)).toString('hex');
+}
+
+function getNodeRpcUrl(chainid: number) {
+  let nodeRpc = ""
+  if (chainid === NetworkEnum.ETHEREUM){
+    nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.ARBITRUM){
+    nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.OPTIMISM){
+    nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.POLYGON){
+    nodeRpc = "https://polygon-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.COINBASE){
+    nodeRpc = "https://base-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.BINANCE){
+    nodeRpc = "https://bnb-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.AVALANCHE){
+    nodeRpc = "https://avax-mainnet.g.alchemy.com/v2/";
+  } else if (chainid === NetworkEnum.GNOSIS){
+    nodeRpc = "https://gnosis-mainnet.g.alchemy.com/v2/"
+  }
+  return nodeRpc + ENV.ALCHEMY_APIKEY;
 }
 
 async function getEnsAddress(ensDomain: string) {
@@ -346,16 +388,6 @@ async function getCrosschainSwapQuote(
   return quote;
 }
 
-// Create server instance
-const server = new McpServer({
-  name: "MCP-Crypto",
-  version: "1.0.0",
-  capabilities: {
-    resources: {},
-    tools: {},
-  },
-});
-
 async function swap(
   fromTokenAddress: string,
   toTokenAddress: string,
@@ -365,23 +397,8 @@ async function swap(
   walletAddress: string,
   privateKey: string,
 ) {
-  let nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/"
-  if (chainid == NetworkEnum.ARBITRUM){
-    nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
-  } else if (chainid == NetworkEnum.OPTIMISM){
-    nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
-  } else if (chainid ===NetworkEnum.POLYGON){
-    nodeRpc = "https://polygon-mainnet.g.alchemy.com/v2/";
-  } else if (chainid == NetworkEnum.COINBASE){
-    nodeRpc = "https://base-mainnet.g.alchemy.com/v2/";
-  } else if (chainid == NetworkEnum.BINANCE){
-    nodeRpc = "https://bnb-mainnet.g.alchemy.com/v2/";
-  } else if (chainid == NetworkEnum.AVALANCHE){
-    nodeRpc = "https://avax-mainnet.g.alchemy.com/v2/";
-  } else if (chainid == NetworkEnum.GNOSIS){
-    nodeRpc = "https://gnosis-mainnet.g.alchemy.com/v2/"
-  }
-  const ethersRpcProvider = new JsonRpcProvider(nodeRpc + ENV.ALCHEMY_APIKEY);
+  const nodeRpc = getNodeRpcUrl(chainid);
+  const ethersRpcProvider = new JsonRpcProvider(nodeRpc);
 
   const ethersProviderConnector: Web3Like = {
       eth: {
@@ -430,24 +447,8 @@ async function crossChainSwap(
   walletAddress: string,
   privateKey: string,
 ) {
-  let nodeRpc = "https://eth-mainnet.g.alchemy.com/v2/"
-
-  if (fromChainId === NetworkEnum.ARBITRUM){
-    nodeRpc = "https://arb-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.OPTIMISM){
-    nodeRpc = "https://opt-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.POLYGON){
-    nodeRpc = "https://polygon-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.COINBASE){
-    nodeRpc = "https://base-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.BINANCE){
-    nodeRpc = "https://bnb-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.AVALANCHE){
-    nodeRpc = "https://avax-mainnet.g.alchemy.com/v2/";
-  } else if (fromChainId === NetworkEnum.GNOSIS){
-    nodeRpc = "https://gnosis-mainnet.g.alchemy.com/"
-  }
-  const ethersRpcProvider = new JsonRpcProvider(nodeRpc + ENV.ALCHEMY_APIKEY);
+  const nodeRpc = getNodeRpcUrl(fromChainId);
+  const ethersRpcProvider = new JsonRpcProvider(nodeRpc);
 
   const ethersProviderConnector: Web3Like = {
       eth: {
@@ -571,6 +572,43 @@ async function crossChainSwap(
       return "Error getting quote"
   });
 }
+
+async function transferERC20Token(
+  tokenAddress: string,
+  toAddress: string,
+  amount: number,
+  decimal: number,
+  privateKey: string,
+  chainId: number,
+) {
+  try {
+    const nodeRpc = getNodeRpcUrl(chainId);
+    const provider = new JsonRpcProvider(nodeRpc);
+    const wallet = new Wallet(privateKey, provider);
+    const tokenContract = new Contract(tokenAddress, transferABI, wallet);
+
+    const amountInWei = ethers.parseUnits(amount.toString(), decimal);
+    const tx = await tokenContract.transfer(toAddress, amountInWei);
+
+    console.log(`Transaction sent: ${tx.hash}`);
+    const receipt = await tx.wait();
+    console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+    return receipt;
+  } catch (error) {
+    console.error("Error transferring ERC20 token:", error);
+    return error;
+  }
+}
+
+// Create server instance
+const server = new McpServer({
+  name: "MCP-Crypto",
+  version: "1.0.0",
+  capabilities: {
+    resources: {},
+    tools: {},
+  },
+});
 
 server.tool(
   "resolveEnsDomain",
@@ -717,6 +755,30 @@ server.tool(
   } 
 )
 
+server.tool(
+  "transferErc20Token",
+  "Transfer ERC20 Token",
+  {
+    tokenAddress: z.string().describe("Token address"),
+    toAddress: z.string().describe("To address"),
+    amount: z.number().describe("Amount to transfer"),
+    decimal: z.number().describe("The decimal of the source token"),
+    privateKey: z.string().describe("Private key"),
+    chainId: z.number().describe("Chain ID"),
+  },
+  async ({ tokenAddress, toAddress, amount, decimal, privateKey, chainId }) => {
+    const receipt = await transferERC20Token(tokenAddress, toAddress, amount, decimal, privateKey, chainId);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(receipt) || "Cannot transfer token",
+        },
+      ],
+    };
+  }
+)
+
 // Add new tool #1: getTokensOwnedByAccount
 server.tool(
   "getTokensOwnedByAccount", 
@@ -798,18 +860,26 @@ server.tool(
 );
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // const transport = new StdioServerTransport();
+  // await server.connect(transport);
   // console.log("Crypto MCP Server running on stdio");
-  console.log(await swap(
-    "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 
-    "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 
-    42161,
-    1,
-    6,
-    "0x2251a41d1ba5f9aff0769be0c22ef1b522c308dd",
-    "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c6945"
-  ))
+  // console.log(await swap(
+  //   "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", 
+  //   "0xaf88d065e77c8cc2239327c5edb3a432268e5831", 
+  //   42161,
+  //   1,
+  //   6, 
+  //   "0x2251a41d1ba5f9aff0769be0c22ef1b522c308dd",
+  //   "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c6945"
+  // ))
+  // transferERC20Token(
+  //   "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+  //   "0xda84f65c486cfd4f923331f3763a0d51e4a615aa",
+  //   0.01,
+  //   6,
+  //   "0x408b35ff4c1d93afe4c8d1808bc1e8587118c36c5855f531c1399061691c9645",
+  //   42161
+  // )
   // console.log(await getCrosschainSwapQuote(1, 10, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", 100))
 }
 
