@@ -24,6 +24,7 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # Claude API settings
 MODEL = "claude-3-7-sonnet-20250219"
+MAX_TOKENS = 512  # Reduced from 1024 to improve response time
 
 # Define system prompt in code
 SYSTEM_PROMPT = """You are a helpful crypto wallet assistant. You can help users with:
@@ -202,121 +203,120 @@ def use_pvkey(private_key, operation_name, confirm=None):
 
 # Chat function for Gradio
 async def chat_bot(message, history, wallet_address, system_prompt_base):
+    """
+    Process a message with Claude and return updated history in the correct format.
+    Always returns a valid message list that Gradio can handle.
+    """
+    # Ensure history is a valid list
+    history = list(history) if history else []
+    
     # Check if API key is configured
     if not ANTHROPIC_API_KEY:
-        yield "", history + [[message, "⚠️ API key not configured! Please add ANTHROPIC_API_KEY to your .env file or environment variables."]]
-        return
+        return history + [{"role": "assistant", "content": "⚠️ API key not configured! Please add ANTHROPIC_API_KEY to your .env file or environment variables."}]
     
     # Customize system prompt with wallet address if available
     current_system_prompt = system_prompt_base
     if wallet_address:
         current_system_prompt += f"\n\nThe user's connected wallet address is: {wallet_address}"
         
-    # Construct messages from history
-    messages = []
-    for human, assistant in history:
-        messages.append({"role": "user", "content": human})
-        if assistant:  # Skip if the assistant hasn't responded yet
-            messages.append({"role": "assistant", "content": assistant})
+    # Construct messages for Claude API from history
+    # Only use most recent messages to keep context smaller and responses faster
+    recent_history = history[-10:] if len(history) > 10 else history
+    
+    anthropic_messages = []
+    for msg in recent_history:
+        if isinstance(msg, dict) and "role" in msg and "content" in msg:
+            if msg["role"] in ["user", "assistant"]:
+                anthropic_messages.append(msg)
     
     # Add the current message
-    messages.append({"role": "user", "content": message})
+    user_msg = {"role": "user", "content": message}
+    anthropic_messages.append(user_msg)
     
     try:
-        # Try to use MCP if the server is available
-        if os.path.exists("../mcp/build/index.js"):
-            async with stdio_client(server_params) as (read, write):
-                # Call Claude API with MCP
-                async with ClientSession(
-                    read, write
-                ) as session:
-                    await session.initialize()
-                    tools = await session.list_tools()
-                    available_tools = [{
-                        "name": tool.name,
-                        "description": tool.description,
-                        "input_schema": tool.inputSchema
-                    } for tool in tools.tools]
-
-                    response = client.messages.create(
-                        system=current_system_prompt,
-                        model=MODEL,
-                        max_tokens=1024,
-                        messages=messages,
-                        tools=available_tools
-                    )
-
-                    # Process response and handle tool calls
-                    final_text = []
-
-                    assistant_message_content = []
-                    for content in response.content:
-                        if content.type == 'text':
-                            final_text.append(content.text)
-                            assistant_message_content.append(content)
-                            bot_message = "\n".join(final_text)
-                            yield "", history + [[message, bot_message]]
-                        elif content.type == 'tool_use':
-                            tool_name = content.name
-                            tool_args = content.input
-
-                            # Execute tool call
-                            result = await session.call_tool(tool_name, tool_args)
-                            final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
-
-                            assistant_message_content.append(content)
-                            messages.append({
-                                "role": "assistant",
-                                "content": assistant_message_content
-                            })
-                            messages.append({
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "tool_result",
-                                        "tool_use_id": content.id,
-                                        "content": result.content
-                                    }
-                                ]
-                            })
-
-                            # Get next response from Claude
-                            response = client.messages.create(
-                                model=MODEL,
-                                max_tokens=1024,
-                                messages=messages,
-                                tools=available_tools
-                            )
-
-                            final_text.append(response.content[0].text)
-                            bot_message = "\n".join(final_text)
-                            yield "", history + [[message, bot_message]]
-
-                    bot_message = "\n".join(final_text)
-                    yield "", history + [[message, bot_message]]
-                    return
-        else:
-            # Fallback to direct Claude API without tools
+        # Try direct Claude API first - generally faster and more reliable
+        try:
             response = client.messages.create(
                 system=current_system_prompt,
                 model=MODEL,
-                max_tokens=1024,
-                messages=messages
+                max_tokens=MAX_TOKENS,
+                messages=anthropic_messages,
+                temperature=0.7,  # Add some randomness
             )
             
-            # Simple response without tools
-            text_response = ""
+            # Process the response
+            response_text = ""
             for content in response.content:
                 if content.type == 'text':
-                    text_response += content.text
+                    response_text += content.text
             
-            yield "", history + [[message, text_response]]
-            return
+            # Add user message and response to history
+            history.append(user_msg)
+            history.append({"role": "assistant", "content": response_text})
+            return history
+        except Exception as api_error:
+            print(f"Direct API error: {str(api_error)}, trying MCP")
+            
+            # Fall back to MCP if direct API fails
+            if os.path.exists("../mcp/build/index.js"):
+                try:
+                    async with stdio_client(server_params) as (read, write):
+                        # Call Claude API with MCP
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            tools = await session.list_tools()
+                            available_tools = [{
+                                "name": tool.name,
+                                "description": tool.description,
+                                "input_schema": tool.inputSchema
+                            } for tool in tools.tools]
+
+                            response = client.messages.create(
+                                system=current_system_prompt,
+                                model=MODEL,
+                                max_tokens=MAX_TOKENS,
+                                messages=anthropic_messages,
+                                tools=available_tools
+                            )
+
+                            # Process response and handle tool calls
+                            final_text = []
+                            for content in response.content:
+                                if content.type == 'text':
+                                    final_text.append(content.text)
+                                elif content.type == 'tool_use':
+                                    # Simplified tool handling
+                                    tool_name = content.name
+                                    tool_args = content.input
+                                    try:
+                                        result = await session.call_tool(tool_name, tool_args)
+                                        final_text.append(f"[Tool result: {result.content[:50]}...]")
+                                    except Exception as tool_error:
+                                        final_text.append(f"[Tool error: {str(tool_error)}]")
+
+                            response_text = "\n".join(final_text)
+                            
+                            # Add user message and response to history
+                            history.append(user_msg)
+                            history.append({"role": "assistant", "content": response_text})
+                            return history
+                except Exception as mcp_error:
+                    # If MCP fails, return the original API error
+                    print(f"MCP error: {str(mcp_error)}")
+                    history.append(user_msg)
+                    history.append({"role": "assistant", "content": f"Error: {str(api_error)}"})
+                    return history
+            else:
+                # If MCP is not available, return the original API error
+                history.append(user_msg)
+                history.append({"role": "assistant", "content": f"Error calling Claude API: {str(api_error)}"})
+                return history
     except Exception as e:
         # Handle any errors gracefully
         error_message = f"Sorry, I encountered an error: {str(e)}\n\nPlease try again later."
-        yield "", history + [[message, error_message]]
-        return
+        history.append(user_msg)
+        history.append({"role": "assistant", "content": error_message})
+        return history
 
 # Create the Gradio interface
 with gr.Blocks(title="WalletPilot", css="""
@@ -466,7 +466,7 @@ with gr.Blocks(title="WalletPilot", css="""
         with gr.Column(scale=3):
             # Add API key warning
             oneinch_api_key = os.getenv("ONEINCH_API_KEY")
-            if not oneinch_api_key or oneinch_api_key == "KTcYqWTXV5b9XLypC1Ky4XAX5B5NidHS":
+            if not oneinch_api_key:
                 gr.HTML("""
                 <div class="api-warning">
                     ⚠️ 1inch API Key not configured! 
@@ -484,7 +484,8 @@ with gr.Blocks(title="WalletPilot", css="""
                             height=400,
                             show_copy_button=True,
                             show_share_button=False,
-                            elem_id="chatbot"
+                            elem_id="chatbot",
+                            type="messages"
                         )
                         msg = gr.Textbox(
                             placeholder="Ask a question...",
@@ -493,19 +494,63 @@ with gr.Blocks(title="WalletPilot", css="""
                         )
                         clear = gr.Button("Clear")
                         
+                        # Define a synchronous respond function that handles message submission
                         def respond(message, chat_history):
-                            return chat_bot(message, chat_history, walletAddressState.value, SYSTEM_PROMPT)
+                            # Create a copy of the chat history to avoid modifying it
+                            chat_history = list(chat_history) if chat_history else []
+                            
+                            # Add the user message immediately
+                            chat_history.append({"role": "user", "content": message})
+                            
+                            # Return the updated chat history and clear the input
+                            return "", chat_history
                         
+                        # Create a separate function for the bot's actual response
+                        async def bot_response(chat_history):
+                            if not chat_history:
+                                return chat_history
+                                
+                            # Get the last user message
+                            last_user_message = None
+                            last_user_index = -1
+                            
+                            for i, message in enumerate(chat_history):
+                                if isinstance(message, dict) and message.get("role") == "user":
+                                    last_user_message = message.get("content")
+                                    last_user_index = i
+                            
+                            if not last_user_message:
+                                return chat_history
+                            
+                            # Check if there's already a response to this message
+                            if last_user_index < len(chat_history) - 1:
+                                next_message = chat_history[last_user_index + 1]
+                                if isinstance(next_message, dict) and next_message.get("role") == "assistant":
+                                    # Already has a response, don't add another one
+                                    return chat_history
+                            
+                            try:
+                                # Only pass history up to the last user message
+                                history_to_pass = chat_history[:last_user_index]
+                                return await chat_bot(last_user_message, history_to_pass, walletAddressState.value, SYSTEM_PROMPT)
+                            except Exception as e:
+                                # If there's an error, add an error message to history
+                                if last_user_index == len(chat_history) - 1:
+                                    # Only add error message if we haven't responded to the last user message
+                                    return chat_history + [{"role": "assistant", "content": f"Error: {str(e)}"}]
+                                return chat_history
+                        
+                        # Connect the respond function to the textbox submit event
                         msg.submit(
                             respond,
+                            [msg, chatbot], 
                             [msg, chatbot],
-                            [msg, chatbot],
-                            queue=True
-                        ).then(
-                            lambda: "",
-                            None,
-                            [msg],
                             queue=False
+                        ).then(
+                            bot_response,
+                            [chatbot],
+                            chatbot,
+                            queue=True
                         )
                         
                         clear.click(lambda: [], None, [chatbot], queue=False)
@@ -545,7 +590,7 @@ with gr.Blocks(title="WalletPilot", css="""
                 refresh_tx_btn = gr.Button("Refresh Transactions", elem_classes=["refresh-btn"])
     
     # Modified save_settings function to use the new component names
-    def modified_save_settings(private_key):
+    async def modified_save_settings(private_key):
         if not private_key:
             return private_key, None, "⚠️ No private key provided.", "No wallet address provided", "No wallet address provided"
         
@@ -560,7 +605,7 @@ with gr.Blocks(title="WalletPilot", css="""
             try:
                 print(f"Fetching wallet data for address: {wallet_address}")
                 # Get balances and transaction history from multiple chains using the new functions
-                wallet_data = asyncio.run(get_all_wallet_data(wallet_address))
+                wallet_data = await get_all_wallet_data(wallet_address)
                 
                 # Debug: Print what chains returned data
                 balances = wallet_data.get("balances", "")
@@ -614,16 +659,34 @@ with gr.Blocks(title="WalletPilot", css="""
     )
     
     # Connect refresh buttons
+    async def refresh_transactions(address):
+        if not is_valid_address(address):
+            return "Invalid wallet address"
+        try:
+            data = await get_all_wallet_data(address)
+            return data["history"]
+        except Exception as e:
+            return f"Error refreshing transactions: {str(e)}"
+    
+    async def refresh_balances(address):
+        if not is_valid_address(address):
+            return "Invalid wallet address"
+        try:
+            data = await get_all_wallet_data(address)
+            return data["balances"]
+        except Exception as e:
+            return f"Error refreshing balances: {str(e)}"
+    
     refresh_tx_btn.click(
-        fn=lambda address: asyncio.run(get_all_wallet_data(address))["history"] if is_valid_address(address) else "Invalid wallet address",
+        fn=refresh_transactions,
         inputs=[walletAddressState],
         outputs=[transactions]
     )
     
     refresh_bal_btn.click(
-        fn=lambda address: asyncio.run(get_all_wallet_data(address))["balances"] if is_valid_address(address) else "Invalid wallet address",
+        fn=refresh_balances,
         inputs=[walletAddressState],
         outputs=[wallet_info]
     )
 
-app.launch()
+app.launch(debug=True)
