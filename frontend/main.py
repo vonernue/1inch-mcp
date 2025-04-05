@@ -12,7 +12,9 @@ from mcp.client.stdio import stdio_client
 # Load environment variables from .env file
 load_dotenv()
 
-client = anthropic.Anthropic()
+client = anthropic.Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+)
 
 # Claude API settings
 MODEL = "claude-3-7-sonnet-20250219"
@@ -23,25 +25,13 @@ server_params = StdioServerParameters(
     env=None,  # Optional environment variables
 )
 
-# Chat function for Gradio
-async def chat_bot(message, history, private_key, public_key):
-    # Construct messages from history
-    messages = []
-    for human, assistant in history:
-        messages.append({"role": "user", "content": human})
-        if assistant:  # Skip if the assistant hasn't responded yet
-            messages.append({"role": "assistant", "content": assistant})
-    
-    # Add the current message
-    messages.append({"role": "user", "content": message})
-    # Define system prompt in code
-    SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
-    response = ""
+async def getLLMResponse(SYSTEM_PROMPT, messages):
     async with stdio_client(server_params) as (read, write):
         # Call Claude API
         async with ClientSession(
             read, write
         ) as session:
+            reqContinue = False
             await session.initialize()
             tools = await session.list_tools()
             available_tools = [{
@@ -49,13 +39,6 @@ async def chat_bot(message, history, private_key, public_key):
                 "description": tool.description,
                 "input_schema": tool.inputSchema
             } for tool in tools.tools]
-
-            if public_key:
-                # Add public key to the system prompt
-                SYSTEM_PROMPT += f"\nUser's wallet address: {public_key}"
-            if private_key:
-                # Add private key to the system prompt
-                SYSTEM_PROMPT += f"\nUser's wallet private key: {private_key}"
 
             response = client.messages.create(
                 system=SYSTEM_PROMPT,
@@ -65,25 +48,21 @@ async def chat_bot(message, history, private_key, public_key):
                 tools=available_tools
             )
             print("Claude response:", response)
-
-
-            # Process response and handle tool calls
             final_text = []
-
             assistant_message_content = []
             for content in response.content:
                 if content.type == 'text':
                     final_text.append(content.text)
                     assistant_message_content.append(content)
 
-                    yield "\n".join(final_text)
                 elif content.type == 'tool_use':
+                    reqContinue = True
                     tool_name = content.name
                     tool_args = content.input
 
                     # Execute tool call
                     result = await session.call_tool(tool_name, tool_args)
-                    final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+                    final_text.append(f"[Calling tool {tool_name}]\n")
 
                     assistant_message_content.append(content)
                     messages.append({
@@ -100,18 +79,37 @@ async def chat_bot(message, history, private_key, public_key):
                             }
                         ]
                     })
+                    
+            return "\n".join(final_text), reqContinue, messages
 
-                    # Get next response from Claude
-                    response = client.messages.create(
-                        model=MODEL,
-                        max_tokens=1024,
-                        messages=messages,
-                        tools=available_tools
-                    )
+# Chat function for Gradio
+async def chat_bot(message, history, private_key, public_key):
+    # Construct messages from history
+    messages = []
+    for human, assistant in history:
+        messages.append({"role": "user", "content": human})
+        if assistant:  # Skip if the assistant hasn't responded yet
+            messages.append({"role": "assistant", "content": assistant})
+    
+    # Add the current message
+    messages.append({"role": "user", "content": message})
+    # Define system prompt in code
+    SYSTEM_PROMPT = "You are a crypto wallet assistant that can help user to check their portfolios, swap tokens."
+    if public_key:
+        # Add public key to the system prompt
+        SYSTEM_PROMPT += f"\nUser's wallet address: {public_key}"
+    if private_key:
+        # Add private key to the system prompt
+        SYSTEM_PROMPT += f"\nUser's wallet private key: {private_key}"
+    
+    fullResponse = ""
+    reqContinue = True
+    while reqContinue:
+        response, reqContinue, messages = await getLLMResponse(SYSTEM_PROMPT, messages)
+        print(messages)
+        fullResponse += response
+        yield fullResponse
 
-                    final_text.append(response.content[0].text)
-
-            yield "\n".join(final_text)
 
 def save_settings(private_key):
     try:
