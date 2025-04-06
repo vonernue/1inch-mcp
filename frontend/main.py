@@ -47,7 +47,6 @@ async def getLLMResponse(SYSTEM_PROMPT, messages):
                 messages=messages,
                 tools=available_tools
             )
-            print("Claude response:", response)
             final_text = []
             assistant_message_content = []
             for content in response.content:
@@ -63,7 +62,7 @@ async def getLLMResponse(SYSTEM_PROMPT, messages):
                     # Execute tool call
                     result = await session.call_tool(tool_name, tool_args)
                     final_text.append(f"[Calling tool {tool_name}]\n")
-
+                    print(result.content)
                     assistant_message_content.append(content)
                     messages.append({
                         "role": "assistant",
@@ -109,7 +108,7 @@ async def chat_bot(message, history, private_key, public_key):
     reqContinue = True
     while reqContinue:
         response, reqContinue, messages = await getLLMResponse(SYSTEM_PROMPT, messages)
-        print(messages)
+
         fullResponse += response
         yield fullResponse
 

@@ -203,8 +203,13 @@ async function getPortfolioData(addresses: string[], chainid: number) {
     params: {
       "addresses": addresses,
       "chain_id": chainid.toString(),
+    },
+    paramsSerializer: {
+      indexes: null
     }
   };
+
+  console.log("Config: ", config);
 
   try {
     const response = await axios.get(url, config);
@@ -668,13 +673,13 @@ server.tool(
 
 server.tool(
   "getPortfolioData",
-  "Get portfolio data of a list of wallet addresses",
+  "Get portfolio data of a list of Wallet address",
   {
-    addresses: z.array(z.string()).describe("Array of wallet addresses"),
+    address: z.string().describe("Wallet address"),
     chainid: z.number().describe("Chain ID"),
   },
-  async ({ addresses, chainid }) => {
-    const portfolioData = await getPortfolioData(addresses, chainid);
+  async ({ address, chainid }) => {
+    const portfolioData = await getPortfolioData([address], chainid);
 
     return {
       content: [
@@ -930,6 +935,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // console.log("Crypto MCP Server running on stdio");
+  // console.log(await getPortfolioData(["0xda84f65c486cfd4f923331f3763a0d51e4a615aa"], 1))
 }
 
 main().catch((error) => {
